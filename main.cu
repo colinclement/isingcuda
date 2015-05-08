@@ -152,11 +152,9 @@ void isingSample(int *d_spins, float *d_random, const float T,
     if (chess == 0){
         for (int i =-1; i < 2; i++){
             for (int j=-1; j < 2; j++){
-                //printf("%d, %d\n", i, j);
                 if (abs(i) != abs(j)){
                     r = MOD(irow + i, L);
                     c = MOD(icol + j, L);
-                    //printf("%d, %d has neighbor %d, %d, added %d, %d\n", irow, icol, r, c, i, j);
                     neighSum += d_spins[r * L + c];
                 }
             }
@@ -182,8 +180,6 @@ void isingSample(int *d_spins, float *d_random, const float T,
             d_spins[site] = -1 * spin;
     }
 
-//    printf("Site %d is %d\n", site, spin);
-//    d_spins[site] = neighSum;
     return;
 }
 
