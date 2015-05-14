@@ -2,7 +2,7 @@ NVCC=nvcc
 GCC=g++
 EXE=cuising
 SRC=main.cu loadSpins.cc
-FLAGS=-O3 -use_fast_math 
+FLAGS=-O3 -use_fast_math #--ptxas-options=-v 
 LIBS=-lcurand
 
 #Location of helper_cuda.h

@@ -8,6 +8,9 @@
 #include <cublas_v2.h>
 #include <curand.h>
 #include <helper_cuda.h> //In samples/common/inc
+#include <thrust/reduce.h>
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
 
 //#define DBUG //Save stuff to files
 #define MOD(x, N) (((x < 0) ? ((x % N) + N) : x) % N)
@@ -18,11 +21,15 @@
 #define MAX(a, b) ((a > b) ? a : b)
 #endif
 
-#define THREADS_PER 8
+#define THREADS_PER 30
 
 __global__
 void isingSample(int *d_spins, float *d_random, const float T,
                  const int L);
+
+__device__
+void chessBoardUpdate(int *s_spins, int *d_spins, float *d_random, 
+                      const float T, const int site, const int sharedsite);
 
 int main(int argc, char **argv){
 
@@ -58,7 +65,9 @@ int main(int argc, char **argv){
     curandGenerator_t rng;
     checkCudaErrors(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_DEFAULT));
     checkCudaErrors(curandSetPseudoRandomGeneratorSeed(rng, 920989ULL));
-    checkCudaErrors(cudaDeviceSynchronize());
+
+    //cublasHandle_t handle;
+    //checkCudaErrors(cublasCreate(&handle));
 
     int *h_spins = (int *)malloc(sizeof(int) * N);
     memset(h_spins, 1, sizeof(int) * N);
@@ -92,27 +101,36 @@ int main(int argc, char **argv){
         fprintf(fp, "%f\t", h_random[i]);
     }
 
-
     int NUMBLOCKS = ceil((float)L/(float)THREADS_PER);
+    int BLOCKMEM = sizeof(int) * (THREADS_PER+2) * (THREADS_PER+2);
     dim3 blocks(NUMBLOCKS, NUMBLOCKS);
-    dim3 threads(THREADS_PER, THREADS_PER);
+    dim3 threads(THREADS_PER+2, THREADS_PER+2);
 
     cudaEvent_t start, stop;
     float time = 0.f;
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
     checkCudaErrors(cudaEventRecord(start, 0));
-    
+   
+
     for (int t = 0; t < burnin; t++){
-        isingSample<<<blocks, threads>>>(d_spins, d_random, T, L);
+        isingSample<<<blocks, threads, 
+                      BLOCKMEM>>>(d_spins, d_random, T, L);
         checkCudaErrors(curandGenerateUniform(rng, d_random, N));
         checkCudaErrors(cudaDeviceSynchronize());
     } 
+    
+    for (int t = 0; t < N_steps; t++){
+        isingSample<<<blocks, threads, 
+                      BLOCKMEM>>>(d_spins, d_random, T, L);
+        checkCudaErrors(curandGenerateUniform(rng, d_random, N));
+        checkCudaErrors(cudaDeviceSynchronize());
+    }
 
     checkCudaErrors(cudaEventRecord(stop, 0));
     checkCudaErrors(cudaEventSynchronize(stop));
     cudaEventElapsedTime(&time, start, stop);
-    printf("Elapsed time: %f ms, %f ms/step\n", time, time/(float)burnin);
+    printf("Elapsed time: %f ms, %f ms / site updated\n", time, time/(float)(burnin+N_steps+N));
     
     checkCudaErrors(cudaMemcpy(h_spins, d_spins, sizeof(int) * N, cudaMemcpyDeviceToHost));
 
@@ -136,53 +154,79 @@ __global__
 void isingSample(int *d_spins, float *d_random, const float T,
                  const int L){
     int N = L*L;
-    int icol = threadIdx.x + blockIdx.x * blockDim.x;
-    int irow = threadIdx.y + blockIdx.y * blockDim.y;
-    int site = irow * L + icol;
-    if (site >= N || icol >=L || irow >= L)
+    int tidx = threadIdx.x, tidy = threadIdx.y;
+    int bdimx = blockDim.x, bdimy = blockDim.y;
+    int col = MOD( (int)(tidx + blockIdx.x * (bdimx - 2) - 1), L);
+    int row = MOD( (int)(tidy + blockIdx.y * (bdimy - 2) - 1), L);
+    int site = row * L + col, sharedsite = tidy * bdimx + tidx;
+    
+    if (site >= N || col >=L || row >= L)
         return;
-    int chess = (icol % 2 + irow % 2)%2;
-    int spin = d_spins[site];
+    
+    int blockChess = (blockIdx.x%2 + blockIdx.y%2)%2;
+    extern __shared__ int s_spins[];//(blockDim+2)**2
 
-    //extern __shared__ int spins[];
+    if (blockChess == 0)
+        chessBoardUpdate(s_spins, d_spins, d_random, T, site, sharedsite);
+    if (blockChess == 1)
+        chessBoardUpdate(s_spins, d_spins, d_random, T, site, sharedsite);
+    
+    return;
+}
 
-    int neighSum = 0, r = site, c = site;
-    float dE = 0;
-
+__device__
+void chessBoardUpdate(int *s_spins, int *d_spins, float *d_random, 
+                      const float T, const int site, const int sharedsite){
+    
+    int row = threadIdx.y, col = threadIdx.x; 
+    //Load spins to shared memory
+    s_spins[sharedsite] = d_spins[site];
+    __syncthreads();
+    
+    if (row == 0 || col == 0 || row == blockDim.y-1 || col == blockDim.x-1)
+        return; //Edge site for shared memory filling
+    
+    int neighSum = 0, r = row, c = col;
+    int chess = (row%2 + col%2)%2;
+    int spin = s_spins[sharedsite];
+    
     if (chess == 0){
         for (int i =-1; i < 2; i++){
             for (int j=-1; j < 2; j++){
                 if (abs(i) != abs(j)){
-                    r = MOD(irow + i, L);
-                    c = MOD(icol + j, L);
-                    neighSum += d_spins[r * L + c];
+                    r = row + i;
+                    c = col + j;
+                    neighSum += s_spins[r * blockDim.x + c];
                 }
             }
         }
-        dE = 2 * spin * neighSum;
+        float dE = 2 * spin * neighSum;
         if (exp(- dE/T) > d_random[site])
-            d_spins[site] = -1 * spin;
+            s_spins[sharedsite] = -1 * spin;
     }
-    neighSum = 0;
+    
     __syncthreads();
+    neighSum = 0;
     if (chess == 1){
         for (int i =-1; i < 2; i++){
             for (int j=-1; j < 2; j++){
                 if (abs(i) != abs(j)){
-                    r = MOD(irow + i, L);
-                    c = MOD(icol + j, L);
-                    neighSum += d_spins[r * L + c];
+                    r = row + i;
+                    c = col + j;
+                    neighSum += s_spins[r * blockDim.x + c];
                 }
             }
         }
-        dE = 2 * spin * neighSum;
+        float dE = 2 * spin * neighSum;
         if (exp(- dE/T) > d_random[site])
-            d_spins[site] = -1 * spin;
-    }
+            s_spins[sharedsite] = -1 * spin;
+    } 
+    __syncthreads();
 
+    //Update spins
+    d_spins[site] = s_spins[sharedsite];
+    __syncthreads();
+    
     return;
 }
-
-
-
 
