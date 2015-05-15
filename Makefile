@@ -17,8 +17,7 @@ ifeq ($(HOST), jection)
 INC= -I$(CUDA_HOME)/samples/common/inc -I.
 endif
 
-GPUOBJS=main.o 
-#GPUOBJS=magVtempMain.o
+GPUOBJS=main.o sampling.o
 #OBJS=loadSpins.o
 
 default: main
@@ -29,8 +28,8 @@ main: $(GPUOBJS)
 main.o: main.cu
 	$(NVCC) $(FLAGS) -c main.cu $(INC) $(LIBS)
 
-#magVtempMain.o: magVtempMain.cu
-#	$(NVCC) $(FLAGS) -c magVtempMain.cu $(INC) $(LIBS)
+sampling.o: sampling.cu
+	$(NVCC) $(FLAGS) -c sampling.cu $(INC) $(LIBS)
 
 .PHONY: clean
 clean:
