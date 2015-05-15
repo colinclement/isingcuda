@@ -21,7 +21,8 @@
 #define MAX(a, b) ((a > b) ? a : b)
 #endif
 
-#define THREADS_PER 16
+#define THREAD_X 64
+#define THREAD_Y 8
 
 __global__
 void isingSample(int *d_spins, float *d_random, const float T,
@@ -101,10 +102,11 @@ int main(int argc, char **argv){
         fprintf(fp, "%f\t", h_random[i]);
     }
 
-    int NUMBLOCKS = ceil((float)L/(float)THREADS_PER);
-    int BLOCKMEM = sizeof(int) * (THREADS_PER+2) * (THREADS_PER+2);
-    dim3 blocks(NUMBLOCKS, NUMBLOCKS);
-    dim3 threads(THREADS_PER+2, THREADS_PER+2);
+    int BLOCKS_X = ceil((float)L/(float)THREAD_X);
+    int BLOCKS_Y = ceil((float)L/(float)THREAD_Y);
+    int BLOCKMEM = sizeof(int) * (THREAD_X+2) * (THREAD_Y+2);
+    dim3 blocks(BLOCKS_X, BLOCKS_Y);
+    dim3 threads(THREAD_X+2, THREAD_Y+2);
 
     cudaEvent_t start, stop;
     float time = 0.f;
@@ -117,14 +119,14 @@ int main(int argc, char **argv){
         isingSample<<<blocks, threads, 
                       BLOCKMEM>>>(d_spins, d_random, T, L);
         checkCudaErrors(curandGenerateUniform(rng, d_random, N));
-        checkCudaErrors(cudaDeviceSynchronize());
+        //checkCudaErrors(cudaDeviceSynchronize());
     } 
     
     for (int t = 0; t < N_steps; t++){
         isingSample<<<blocks, threads, 
                       BLOCKMEM>>>(d_spins, d_random, T, L);
         checkCudaErrors(curandGenerateUniform(rng, d_random, N));
-        checkCudaErrors(cudaDeviceSynchronize());
+        //checkCudaErrors(cudaDeviceSynchronize());
     }
 
     checkCudaErrors(cudaEventRecord(stop, 0));
@@ -155,7 +157,6 @@ int main(int argc, char **argv){
 __global__
 void isingSample(int *d_spins, float *d_random, const float T,
                  const int L){
-    int N = L*L;
     int tidx = threadIdx.x, tidy = threadIdx.y;
     int bdimx = blockDim.x, bdimy = blockDim.y;
     int x = (int)(tidx + blockIdx.x * (bdimx - 2)) - 1;
