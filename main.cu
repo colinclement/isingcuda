@@ -21,7 +21,7 @@
 #define MAX(a, b) ((a > b) ? a : b)
 #endif
 
-#define THREADS_PER 30
+#define THREADS_PER 16
 
 __global__
 void isingSample(int *d_spins, float *d_random, const float T,
