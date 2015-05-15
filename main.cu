@@ -150,19 +150,22 @@ int main(int argc, char **argv){
     return EXIT_SUCCESS;
 }
 
+//TODO: CHECK BOUNDARY CONDITIONS
+
 __global__
 void isingSample(int *d_spins, float *d_random, const float T,
                  const int L){
     int N = L*L;
     int tidx = threadIdx.x, tidy = threadIdx.y;
     int bdimx = blockDim.x, bdimy = blockDim.y;
-    int col = MOD( (int)(tidx + blockIdx.x * (bdimx - 2) - 1), L);
-    int row = MOD( (int)(tidy + blockIdx.y * (bdimy - 2) - 1), L);
+    int x = (int)(tidx + blockIdx.x * (bdimx - 2)) - 1;
+    int y = (int)(tidy + blockIdx.y * (bdimy - 2)) - 1;
+    if (x > L || y > L)
+        return; //Prevents overlap with incommensurate blocks
+    
+    int col = MOD(x, L);
+    int row = MOD(y, L);
     int site = row * L + col, sharedsite = tidy * bdimx + tidx;
-    
-    if (site >= N || col >=L || row >= L)
-        return;
-    
     int blockChess = (blockIdx.x%2 + blockIdx.y%2)%2;
     extern __shared__ int s_spins[];//(blockDim+2)**2
 

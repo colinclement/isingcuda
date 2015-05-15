@@ -18,6 +18,7 @@ INC= -I$(CUDA_HOME)/samples/common/inc -I.
 endif
 
 GPUOBJS=main.o 
+#GPUOBJS=magVtempMain.o
 #OBJS=loadSpins.o
 
 default: main
@@ -27,6 +28,9 @@ main: $(GPUOBJS)
 
 main.o: main.cu
 	$(NVCC) $(FLAGS) -c main.cu $(INC) $(LIBS)
+
+#magVtempMain.o: magVtempMain.cu
+#	$(NVCC) $(FLAGS) -c magVtempMain.cu $(INC) $(LIBS)
 
 .PHONY: clean
 clean:
