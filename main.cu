@@ -23,8 +23,8 @@
 #define MAX(a, b) ((a > b) ? a : b)
 #endif
 
-#define THREAD_X 64
-#define THREAD_Y 8
+#define THREAD_X 16 
+#define THREAD_Y 16
 
 int main(int argc, char **argv){
 
@@ -138,6 +138,12 @@ int main(int argc, char **argv){
         //}
     }
 
+    checkCudaErrors(cudaMemcpy(h_spins, d_spins, sizeof(int) * N, cudaMemcpyDeviceToHost));
+    for (int i=0; i < N; i++){
+        if (i%L ==0)
+            fprintf(fpSave, "\n");
+        fprintf(fpSave, "%d\t", h_spins[i]);
+    }
     fclose(fpSave);
 
     checkCudaErrors(cudaEventRecord(stop, 0));
@@ -145,8 +151,6 @@ int main(int argc, char **argv){
     cudaEventElapsedTime(&time, start, stop);
     printf("Elapsed time: %f ms, %f ms / site updated\n", time, time/(float)(burnin+N_steps+N));
     
-    checkCudaErrors(cudaMemcpy(h_spins, d_spins, sizeof(int) * N, cudaMemcpyDeviceToHost));
-
 #ifdef DBUG
     for (int i=0; i < N; i++){
         if (i%L ==0)
