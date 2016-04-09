@@ -23,24 +23,15 @@ void chessBoardUpdate(int *s_spins, int *d_spins, float *d_random,
     if (row == 0 || col == 0 || row == blockDim.y-1 || col == blockDim.x-1)
         return; //Edge site for shared memory filling
     
-    int neighSum = 0, r = row, c = col;
+    int neighSum = 0;
     int chess = (row%2 + col%2)%2;
     int spin = s_spins[sharedsite];
     
     if (chess == 0){
-        //for (int i =-1; i < 2; i++){
-        //    for (int j=-1; j < 2; j++){
-        //        if (abs(i) != abs(j)){
-        //            r = row + i;
-        //            c = col + j;
-        //            neighSum += s_spins[r * blockDim.x + c];
-        //        }
-        //    }
-        //}
-        neighsum += s_spins[(row - 1) * blockDim.x + col];
-        neighsum += s_spins[row * blockDim.x + (col - 1)];
-        neighsum += s_spins[row * blockDim.x + (col + 1)];
-        neighsum += s_spins[(row + 1) * blockDim.x + col];
+        neighSum += s_spins[(row - 1) * blockDim.x + col];
+        neighSum += s_spins[row * blockDim.x + (col - 1)];
+        neighSum += s_spins[row * blockDim.x + (col + 1)];
+        neighSum += s_spins[(row + 1) * blockDim.x + col];
         float dE = 2 * spin * neighSum;
         if (exp(- dE/T) > d_random[site])
             s_spins[sharedsite] = -1 * spin;
@@ -49,19 +40,10 @@ void chessBoardUpdate(int *s_spins, int *d_spins, float *d_random,
     __syncthreads();
     neighSum = 0;
     if (chess == 1){
-        //for (int i =-1; i < 2; i++){
-        //    for (int j=-1; j < 2; j++){
-        //        if (abs(i) != abs(j)){
-        //            r = row + i;
-        //            c = col + j;
-        //            neighSum += s_spins[r * blockDim.x + c];
-        //        }
-        //    }
-        //}
-        neighsum += s_spins[(row - 1) * blockDim.x + col];
-        neighsum += s_spins[row * blockDim.x + (col - 1)];
-        neighsum += s_spins[row * blockDim.x + (col + 1)];
-        neighsum += s_spins[(row + 1) * blockDim.x + col];
+        neighSum += s_spins[(row - 1) * blockDim.x + col];
+        neighSum += s_spins[row * blockDim.x + (col - 1)];
+        neighSum += s_spins[row * blockDim.x + (col + 1)];
+        neighSum += s_spins[(row + 1) * blockDim.x + col];
         float dE = 2 * spin * neighSum;
         if (exp(- dE/T) > d_random[site])
             s_spins[sharedsite] = -1 * spin;
