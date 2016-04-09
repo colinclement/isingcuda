@@ -23,8 +23,10 @@
 #define MAX(a, b) ((a > b) ? a : b)
 #endif
 
-#define THREAD_X 16 
-#define THREAD_Y 16
+//I actually use THREAD_X+2, THREAD_Y+2
+// (THREAD_X+2)*(THREAD_Y+2) < 1024
+#define THREAD_X 30 
+#define THREAD_Y 30
 
 int main(int argc, char **argv){
 
