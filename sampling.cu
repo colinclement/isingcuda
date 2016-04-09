@@ -18,7 +18,7 @@ void chessBoardUpdate(int *s_spins, int *d_spins, float *d_random,
     int row = threadIdx.y, col = threadIdx.x; 
     //Load spins to shared memory
     s_spins[sharedsite] = d_spins[site];
-    __syncthreads();
+    __syncthreads();//wait until spins are loaded
     
     if (row == 0 || col == 0 || row == blockDim.y-1 || col == blockDim.x-1)
         return; //Edge site for shared memory filling
@@ -72,6 +72,7 @@ void isingSample(int *d_spins, float *d_random, const float T,
                  const int L){
     int tidx = threadIdx.x, tidy = threadIdx.y;
     int bdimx = blockDim.x, bdimy = blockDim.y;
+    // bdim - 2 because we don't update boundary
     int x = (int)(tidx + blockIdx.x * (bdimx - 2)) - 1;
     int y = (int)(tidy + blockIdx.y * (bdimy - 2)) - 1;
     if (x > L || y > L)
