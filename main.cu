@@ -61,8 +61,12 @@ int main(int argc, char **argv){
     checkCudaErrors(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_DEFAULT));
     checkCudaErrors(curandSetPseudoRandomGeneratorSeed(rng, 920989ULL));
 
-    //cublasHandle_t handle;
-    //checkCudaErrors(cublasCreate(&handle));
+    cudaStream_t cpyStream, rngStream, sampleStream;
+    checkCudaErrors(cudaStreamCreate(&cpyStream));
+    checkCudaErrors(cudaStreamCreate(&rngStream));
+    checkCudaErrors(cudaStreamCreate(&sampleStream));
+    
+    checkCudaErrors(curandSetStream(rng, rngStream));
 
     int *h_spins = (int *)malloc(sizeof(int) * N);
     memset(h_spins, 1, sizeof(int) * N);
@@ -72,18 +76,16 @@ int main(int argc, char **argv){
         h_spins[i] = (r > 0.5) ? 1 : -1;
     }
     int *d_spins;
-    float *d_random;
+    float *d_random; 
     checkCudaErrors(cudaMalloc((void **)&d_spins, sizeof(int) * N));
     checkCudaErrors(cudaMalloc((void **)&d_random, sizeof(float) * N));
     checkCudaErrors(cudaMemcpy(d_spins, h_spins, sizeof(int) * N, cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaDeviceSynchronize());
 
     checkCudaErrors(curandGenerateUniform(rng, d_random, N));
-    checkCudaErrors(cudaDeviceSynchronize());
+
+#ifdef DBUG
     float *h_random = (float *)malloc(sizeof(float) * N);
     checkCudaErrors(cudaMemcpy(h_random, d_random, sizeof(int) * N, cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaDeviceSynchronize());
-
     FILE *fp = fopen("dbug.dat", "w");
     for (int i=0; i < N; i++){
         if (i%L ==0)
@@ -95,12 +97,14 @@ int main(int argc, char **argv){
             fprintf(fp, "\n");
         fprintf(fp, "%f\t", h_random[i]);
     }
+    free(h_random);
+#endif 
 
     int BLOCKS_X = ceil((float)L/(float)THREAD_X);
     int BLOCKS_Y = ceil((float)L/(float)THREAD_Y);
     int BLOCKMEM = sizeof(int) * (THREAD_X+2) * (THREAD_Y+2);
     dim3 blocks(BLOCKS_X, BLOCKS_Y);
-    dim3 threads(THREAD_X+2, THREAD_Y+2);
+    dim3 threads(THREAD_X+2, THREAD_Y+2); //include boundary
 
     cudaEvent_t start, stop;
     float time = 0.f;
@@ -110,18 +114,31 @@ int main(int argc, char **argv){
    
 
     for (int t = 0; t < burnin; t++){
+        checkCudaErrors(cudaStreamSynchronize(rngStream));
         isingSample<<<blocks, threads, 
-                      BLOCKMEM>>>(d_spins, d_random, T, L);
+                      BLOCKMEM, sampleStream>>>(d_spins, d_random, T, L);
         checkCudaErrors(curandGenerateUniform(rng, d_random, N));
-        //checkCudaErrors(cudaDeviceSynchronize());
     } 
     
+    FILE *fpSave = fopen(filename, "w");
+
     for (int t = 0; t < N_steps; t++){
+        checkCudaErrors(cudaStreamSynchronize(rngStream));
         isingSample<<<blocks, threads, 
-                      BLOCKMEM>>>(d_spins, d_random, T, L);
+                      BLOCKMEM, sampleStream>>>(d_spins, d_random, T, L);
         checkCudaErrors(curandGenerateUniform(rng, d_random, N));
-        //checkCudaErrors(cudaDeviceSynchronize());
+        //TODO: make bitpacking function
+        //if (t % period == 0){
+        //    checkCudaErrrors(cudaMemcpyAsync(h_spins, d_spins, sizeof(int)*N,
+        //                                     cudaMemcpyDeviceToHost, cpyStream));
+        //    for (int i=0; i < N; i++){
+        //        fprintf(fpSave, "%f\t", h_spin[i]);
+        //    }
+        //    fprintf(fpSave, "\n");
+        //}
     }
+
+    fclose(fpSave);
 
     checkCudaErrors(cudaEventRecord(stop, 0));
     checkCudaErrors(cudaEventSynchronize(stop));
@@ -130,17 +147,23 @@ int main(int argc, char **argv){
     
     checkCudaErrors(cudaMemcpy(h_spins, d_spins, sizeof(int) * N, cudaMemcpyDeviceToHost));
 
+#ifdef DBUG
     for (int i=0; i < N; i++){
         if (i%L ==0)
             fprintf(fp, "\n");
         fprintf(fp, "%d\t", h_spins[i]);
     }
-
     fclose(fp);
+#endif
+   
+    checkCudaErrors(cudaStreamDestroy(cpyStream));
+    checkCudaErrors(cudaStreamDestroy(rngStream));
+    checkCudaErrors(cudaStreamDestroy(sampleStream));
+    checkCudaErrors(curandDestroyGenerator(rng));
+
     cudaFree(d_spins);
     cudaFree(d_random);
     free(h_spins);
-    free(h_random);
     checkCudaErrors(cudaGetLastError());
 
     return EXIT_SUCCESS;
