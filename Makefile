@@ -3,6 +3,7 @@ NVCC=nvcc
 EXE=cuising
 SRC=main.cu loadSpins.cc
 FLAGS=-O3 -use_fast_math #--ptxas-options=-v 
+FLAGS+=-DDBUG #define DBUG
 LIBS=-lcurand
 
 #Location of helper_cuda.h
