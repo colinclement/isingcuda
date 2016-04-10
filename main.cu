@@ -25,8 +25,8 @@
 
 //I actually use THREAD_X+2, THREAD_Y+2
 // (THREAD_X+2)*(THREAD_Y+2) < 1024
-#define THREAD_X 30 
-#define THREAD_Y 30
+#define THREAD_X 14 
+#define THREAD_Y 14
 
 int main(int argc, char **argv){
 
@@ -40,12 +40,12 @@ int main(int argc, char **argv){
     cudaSetDevice(dev);
     
     const char *printMSG = "Incorrect number of arguments: Usage: \n\
-			    ./cuising filename L T N_steps period burnin \n";
-    if (argc < 7){
+			    ./cuising filename L T N_steps period burnin stepsize\n";
+    if (argc < 8){
         printf("%s", printMSG);
 	return 0;
     }
-    else if (argc > 7){
+    else if (argc > 8){
         printf("%s", printMSG);
         return 0;
     }
@@ -54,8 +54,9 @@ int main(int argc, char **argv){
     int L = atoi(argv[2]), N_steps = atoi(argv[4]);
     float T = atof(argv[3]);
     int period = atoi(argv[5]), burnin = atoi(argv[6]);
-    printf("Saving to %s with L=%d, T=%f, every %d steps,\n with burnin=%d\n",
-           filename, L, T, period, burnin);
+    float step = atof(argv[7]);
+    printf("Saving to %s every %d steps \nL=%d, T=%f, stepsize=%f, burnin=%d\n",
+           filename, period, L, T, step, burnin);
 
     int N = L*L;
 
@@ -70,82 +71,68 @@ int main(int argc, char **argv){
     
     checkCudaErrors(curandSetStream(rng, rngStream));
 
-    int *h_spins = (int *)malloc(sizeof(int) * N);
-    memset(h_spins, 1, sizeof(int) * N);
-
+    float *h_spins = (float *)malloc(sizeof(float) * N);
+    memset(h_spins, 0, sizeof(float) * N);
+    
+    //Start with random angles
     for (int i = 0; i < N; i++){
-        float r = (float)rand()/RAND_MAX;
-        h_spins[i] = (r > 0.5) ? 1 : -1;
+        h_spins[i] = 2*M_PI*(float)rand()/RAND_MAX;
     }
-    int *d_spins;
-    float *d_random; 
-    checkCudaErrors(cudaMalloc((void **)&d_spins, sizeof(int) * N));
-    checkCudaErrors(cudaMalloc((void **)&d_random, sizeof(float) * N));
-    checkCudaErrors(cudaMemcpy(d_spins, h_spins, sizeof(int) * N, cudaMemcpyHostToDevice));
+    float *d_spins;
+    float *d_random, *d_random_step; 
+    checkCudaErrors(cudaMalloc((void **)&d_spins, sizeof(float) * N));
+    checkCudaErrors(cudaMalloc((void **)&d_random, sizeof(float) * 2*N));
+    checkCudaErrors(cudaMemcpy(d_spins, h_spins, sizeof(float) * N, cudaMemcpyHostToDevice));
 
-    checkCudaErrors(curandGenerateUniform(rng, d_random, N));
-
-#ifdef DBUG
-    float *h_random = (float *)malloc(sizeof(float) * N);
-    checkCudaErrors(cudaMemcpy(h_random, d_random, sizeof(int) * N, cudaMemcpyDeviceToHost));
-    FILE *fp = fopen("dbug.dat", "w");
-    for (int i=0; i < N; i++){
-        if (i%L ==0)
-            fprintf(fp, "\n");
-        fprintf(fp, "%d\t", h_spins[i]);
-    }
-    for (int i=0; i < N; i++){
-        if (i%L ==0)
-            fprintf(fp, "\n");
-        fprintf(fp, "%f\t", h_random[i]);
-    }
-    free(h_random);
-#endif 
+    checkCudaErrors(curandGenerateUniform(rng, d_random, 2*N));
+    d_random_step = d_random + N;
 
     int BLOCKS_X = ceil((float)L/(float)THREAD_X);
     int BLOCKS_Y = ceil((float)L/(float)THREAD_Y);
-    int BLOCKMEM = sizeof(int) * (THREAD_X+2) * (THREAD_Y+2);
+    int BLOCKMEM = sizeof(float) * (THREAD_X+2) * (THREAD_Y+2);
     dim3 blocks(BLOCKS_X, BLOCKS_Y);
     dim3 threads(THREAD_X+2, THREAD_Y+2); //include boundary
+    #ifdef DBUG
+    printf("Blocks(%d, %d)\n", BLOCKS_X, BLOCKS_Y); 
+    printf("Threads(%d, %d)\n", THREAD_X+2, THREAD_Y+2);
+    #endif
 
     cudaEvent_t start, stop;
     float time = 0.f;
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
     checkCudaErrors(cudaEventRecord(start, 0));
-   
 
     for (int t = 0; t < burnin; t++){
         checkCudaErrors(cudaStreamSynchronize(rngStream));
         isingSample<<<blocks, threads, 
-                      BLOCKMEM, sampleStream>>>(d_spins, d_random, T, L);
-        checkCudaErrors(curandGenerateUniform(rng, d_random, N));
+                      BLOCKMEM, sampleStream>>>(d_spins, d_random, d_random_step, T, L, step);
+        checkCudaErrors(curandGenerateUniform(rng, d_random, 2*N));
+        d_random_step = d_random + N;
     } 
     
     FILE *fpSave = fopen(filename, "w");
 
     for (int t = 0; t < N_steps; t++){
+        if (t % period == 0){
+            checkCudaErrors(cudaMemcpyAsync(h_spins, d_spins, sizeof(float)*N,
+                                             cudaMemcpyDeviceToHost, cpyStream));
+            for (int i=0; i < N; i++){
+                if (i%L==0)
+                    fprintf(fpSave, "\n");
+                fprintf(fpSave, "%f\t", h_spins[i]);
+            }
+            fprintf(fpSave, "\n");
+        }
+        
         checkCudaErrors(cudaStreamSynchronize(rngStream));
         isingSample<<<blocks, threads, 
-                      BLOCKMEM, sampleStream>>>(d_spins, d_random, T, L);
-        checkCudaErrors(curandGenerateUniform(rng, d_random, N));
-        //TODO: make bitpacking function
-        //if (t % period == 0){
-        //    checkCudaErrrors(cudaMemcpyAsync(h_spins, d_spins, sizeof(int)*N,
-        //                                     cudaMemcpyDeviceToHost, cpyStream));
-        //    for (int i=0; i < N; i++){
-        //        fprintf(fpSave, "%f\t", h_spin[i]);
-        //    }
-        //    fprintf(fpSave, "\n");
-        //}
+                      BLOCKMEM, sampleStream>>>(d_spins, d_random, d_random_step, T, L, step);
+        checkCudaErrors(curandGenerateUniform(rng, d_random, 2*N));
+        d_random_step = d_random + N;
+        
     }
 
-    checkCudaErrors(cudaMemcpy(h_spins, d_spins, sizeof(int) * N, cudaMemcpyDeviceToHost));
-    for (int i=0; i < N; i++){
-        if (i%L ==0)
-            fprintf(fpSave, "\n");
-        fprintf(fpSave, "%d\t", h_spins[i]);
-    }
     fclose(fpSave);
 
     checkCudaErrors(cudaEventRecord(stop, 0));
@@ -153,15 +140,6 @@ int main(int argc, char **argv){
     cudaEventElapsedTime(&time, start, stop);
     printf("Elapsed time: %f ms, %f ms / site updated\n", time, time/(float)(burnin+N_steps+N));
     
-#ifdef DBUG
-    for (int i=0; i < N; i++){
-        if (i%L ==0)
-            fprintf(fp, "\n");
-        fprintf(fp, "%d\t", h_spins[i]);
-    }
-    fclose(fp);
-#endif
-   
     checkCudaErrors(cudaStreamDestroy(cpyStream));
     checkCudaErrors(cudaStreamDestroy(rngStream));
     checkCudaErrors(cudaStreamDestroy(sampleStream));
@@ -169,6 +147,7 @@ int main(int argc, char **argv){
 
     cudaFree(d_spins);
     cudaFree(d_random);
+    //cudaFree(d_random_step);
     free(h_spins);
     checkCudaErrors(cudaGetLastError());
 
