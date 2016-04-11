@@ -1,5 +1,5 @@
 NVCC=nvcc
-#GCC=g++
+GCC=g++
 EXE=cuising
 SRC=main.cu loadSpins.cc
 FLAGS=-O3 -use_fast_math #--ptxas-options=-v 
