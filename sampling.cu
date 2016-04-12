@@ -33,7 +33,8 @@ float calculate_dE(const float *s_spins, const float trial,
     }
 
 __global__
-void isingSample(float *d_spins, const float *d_random, const float *d_random_step, 
+void isingSample(float *d_spins, float *d_mx, float *d_my, float *d_localE, 
+                 const float *d_random, const float *d_random_step, 
                  const float T, const int L, const float step){
     
     int tidx = threadIdx.x, tidy = threadIdx.y;
@@ -59,15 +60,24 @@ void isingSample(float *d_spins, const float *d_random, const float *d_random_st
     if (chess == 0){
         float trial = s_spins[sharedsite] + (d_random_step[site]-0.5f)*TPI_F*step;
         float dE = calculate_dE(s_spins, trial, step, sharedsite);
-        if (dE < 0 || expf(-dE/T) > d_random[site])
+        if (dE < 0 || expf(-dE/T) > d_random[site]){
             s_spins[sharedsite] = trial;
+            d_localE[site] += dE;   
+            d_mx[site] = cosf(trial);
+            d_my[site] = sinf(trial);
+        }
+
     }
     __syncthreads();
     if (chess == 1){
         float trial = s_spins[sharedsite] + (d_random_step[site]-0.5f)*TPI_F*step;
         float dE = calculate_dE(s_spins, trial, step, sharedsite);
-        if (dE < 0 || expf(-dE/T) > d_random[site])
+        if (dE < 0 || expf(-dE/T) > d_random[site]){
             s_spins[sharedsite] = trial;
+            d_localE[site] += dE;   
+            d_mx[site] = cosf(trial);
+            d_my[site] = sinf(trial);
+        }
     } 
     __syncthreads();
 
