@@ -40,21 +40,19 @@ int main(int argc, char **argv){
     cudaSetDevice(dev);
     
     const char *printMSG = "Incorrect number of arguments: Usage: \n\
-			    ./cuising filename L T N_steps period burnin stepsize\n";
-    if (argc != 8){
+			    ./cuising filename L T N_steps save_period burnin stepsize\n\
+                (optional final argument) initial_spinfile";
+    if (argc < 8 || argc > 9){
         printf("%s", printMSG);
 	return 0;
     }
-    //else if (argc > 8){
-    //    printf("%s", printMSG);
-    //    return 0;
-    //}
 
     char *filename = argv[1];
     int L = atoi(argv[2]), N_steps = atoi(argv[4]);
     float T = atof(argv[3]);
     int period = atoi(argv[5]), burnin = atoi(argv[6]);
     float step = atof(argv[7]);
+
     printf("Saving to %s every %d steps \nL=%d, T=%f, stepsize=%f, burnin=%d\n",
            filename, period, L, T, step, burnin);
 
@@ -63,6 +61,8 @@ int main(int argc, char **argv){
     curandGenerator_t rng;
     checkCudaErrors(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_DEFAULT));
     checkCudaErrors(curandSetPseudoRandomGeneratorSeed(rng, 920989ULL));
+    cublasHandle_t handle;
+    cublasCreate(&handle);
 
     cudaStream_t cpyStream, rngStream;
     checkCudaErrors(cudaStreamCreate(&cpyStream));
@@ -73,18 +73,54 @@ int main(int argc, char **argv){
     #endif
 
     float *h_spins = (float *)malloc(sizeof(float) * N);
+    float *h_mx = (float *)malloc(sizeof(float) * N);
+    float *h_my = (float *)malloc(sizeof(float) * N);
+    float *h_localE = (float *)malloc(sizeof(float) * N);
+    float *h_ones = (float *)malloc(sizeof(float) * N);
+    for (int i=0; i < N; i++)
+        h_ones[i] = 1.;
     memset(h_spins, 0, sizeof(float) * N);
-    
-    //Start with random angles
+    memset(h_localE, 0, sizeof(float) * N);
+  
+    // Initialize spin configurations
+    if (argc == 8){
+        for (int i = 0; i < N; i++)
+            h_spins[i] = 2*M_PI*(float)rand()/RAND_MAX;
+    } else {
+        FILE *initFile = fopen(argv[8], "r");
+        if (!initFile){
+            printf("no file opened, %s\n", argv[8]);
+            exit(2);
+        }
+        int j = 0;
+        for (int i = 0; i < L; i++){
+            for (j = 0; j < L-1; j++)
+                int err = fscanf(initFile, "%f\t", &(h_spins[i*L+j]));
+            int err = fscanf(initFile, "%f\n", &(h_spins[i*L+j+1]));
+        }
+        fclose(initFile);
+    }
     for (int i = 0; i < N; i++){
-        h_spins[i] = 2*M_PI*(float)rand()/RAND_MAX;
+        h_mx[i] = cos(h_spins[i]); 
+        h_my[i] = sin(h_spins[i]); 
     }
 
-    float *d_spins;
+    float *d_spins, *d_mx, *d_my, *d_localE;
     float *d_random, *d_random_step; 
+    float *d_ones;
+    checkCudaErrors(cudaMalloc((void **)&d_ones, sizeof(float) * N));
+    
     checkCudaErrors(cudaMalloc((void **)&d_spins, sizeof(float) * N));
+    checkCudaErrors(cudaMalloc((void **)&d_mx, sizeof(float) * N));
+    checkCudaErrors(cudaMalloc((void **)&d_my, sizeof(float) * N));
+    checkCudaErrors(cudaMalloc((void **)&d_localE, sizeof(float) * N));
     checkCudaErrors(cudaMalloc((void **)&d_random, sizeof(float) * 2*N));
+
+    checkCudaErrors(cudaMemcpy(d_ones, h_ones, sizeof(float) * N, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_spins, h_spins, sizeof(float) * N, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_mx, h_mx, sizeof(float) * N, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_my, h_my, sizeof(float) * N, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_localE, h_localE, sizeof(float) * N, cudaMemcpyHostToDevice));
 
     checkCudaErrors(curandGenerateUniform(rng, d_random, 2*N));
     d_random_step = d_random + N;
@@ -127,42 +163,52 @@ int main(int argc, char **argv){
     for (int t = 0; t < burnin; t++){
         //checkCudaErrors(cudaStreamSynchronize(rngStream));
         isingSample<<<blocks, threads, 
-                      BLOCKMEM>>>(d_spins, d_random, d_random_step, T, L, step);
+                      BLOCKMEM>>>(d_spins, d_mx, d_my, d_localE,
+                                  d_random, d_random_step, T, L, step);
         checkCudaErrors(curandGenerateUniform(rng, d_random, 2*N));
         d_random_step = d_random + N;
     } 
     printf("Burn-in complete, sampling\n");
 
     FILE *fpSave = fopen(filename, "w");
+    FILE *fpEMag = fopen("energy_magnetization.dat", "w");
 
+    float Mx = 0.f, My = 0.f, E = 0.f;
     for (int t = 0; t < N_steps; t++){
        
         //checkCudaErrors(cudaStreamSynchronize(rngStream));
         isingSample<<<blocks, threads, 
-                      BLOCKMEM>>>(d_spins, d_random, d_random_step, T, L, step);
+                      BLOCKMEM>>>(d_spins, d_mx, d_my, d_localE,
+                                  d_random, d_random_step, T, L, step);
         checkCudaErrors(curandGenerateUniform(rng, d_random, 2*N));
         d_random_step = d_random + N;
         
+        checkCudaErrors(cublasSdot(handle, N, d_mx, 1., d_ones, 1., &Mx));
+        checkCudaErrors(cublasSdot(handle, N, d_my, 1., d_ones, 1., &My));
+        checkCudaErrors(cublasSdot(handle, N, d_localE, 1., d_ones, 1., &E));
+        E /= (2.*N); //double counting local energy
+        Mx /= (float)N;
+        My /= (float)N;
+        fprintf(fpEMag, "%f\t%f\t%f\n", Mx, My, E);
+
         if (t % period == 0){
             //Quit changing d_spins before copying
-            //checkCudaErrors(cudaDeviceSynchronize());
             //checkCudaErrors(cudaStreamSynchronize(sampleStream));
             checkCudaErrors(cudaMemcpyAsync(h_spins, d_spins, sizeof(float)*N,
                                             cudaMemcpyDeviceToHost, cpyStream));
-            //checkCudaErrors(cudaMemcpy(h_spins, d_spins, sizeof(float)*N,
-            //                           cudaMemcpyDeviceToHost));
             for (int i=0; i < N; i++){
-                if (i%L==0)
+                if (i > 0 && i%L==0)
                     fprintf(fpSave, "\n");
                 fprintf(fpSave, "%f\t", h_spins[i]);
             }
             fprintf(fpSave, "\n");
         }
-        //checkCudaErrors(cudaDeviceSynchronize());
+        checkCudaErrors(cudaDeviceSynchronize());
         
     }
 
     fclose(fpSave);
+    fclose(fpEMag);
 
     checkCudaErrors(cudaEventRecord(stop, 0));
     checkCudaErrors(cudaEventSynchronize(stop));
@@ -175,11 +221,20 @@ int main(int argc, char **argv){
     #endif
     //checkCudaErrors(cudaStreamDestroy(sampleStream));
     checkCudaErrors(curandDestroyGenerator(rng));
+    cublasDestroy(handle);
 
     cudaFree(d_spins);
+    cudaFree(d_mx);
+    cudaFree(d_my);
+    cudaFree(d_localE);
     cudaFree(d_random);
+    cudaFree(d_ones);
     //cudaFree(d_random_step);
     free(h_spins);
+    free(h_mx);
+    free(h_my);
+    free(h_localE);
+    free(h_ones);
     checkCudaErrors(cudaGetLastError());
 
     return EXIT_SUCCESS;
