@@ -41,14 +41,14 @@ int main(int argc, char **argv){
     
     const char *printMSG = "Incorrect number of arguments: Usage: \n\
 			    ./cuising filename L T N_steps period burnin stepsize\n";
-    if (argc < 8){
+    if (argc != 8){
         printf("%s", printMSG);
 	return 0;
     }
-    else if (argc > 8){
-        printf("%s", printMSG);
-        return 0;
-    }
+    //else if (argc > 8){
+    //    printf("%s", printMSG);
+    //    return 0;
+    //}
 
     char *filename = argv[1];
     int L = atoi(argv[2]), N_steps = atoi(argv[4]);
