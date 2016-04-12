@@ -4,7 +4,7 @@ EXE=cuising
 SRC=main.cu loadSpins.cc
 FLAGS=-O3 -use_fast_math #--ptxas-options=-v 
 #FLAGS+=-DDBUG #define DBUG
-LIBS=-lcurand
+LIBS=-lcurand -lcublas
 
 #Location of helper_cuda.h
 HOST=$(shell hostname)
