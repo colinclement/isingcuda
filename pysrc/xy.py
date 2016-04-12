@@ -14,7 +14,7 @@ def update(spins, random, random_step, E, T):
             e1 = -(np.cos(t-spins[(r-1)%L,c])+np.cos(t-spins[(r+1)%L,c])+
                    np.cos(t-spins[r,(c-1)%L])+np.cos(t-spins[r,(c+1)%L]))
             dE = e1 - e0
-            E[r,c] = dE
+            E[r,c] = e0
             if np.exp(-dE/T) > random[r,c]:
                 spins[r,c] = t
                 E[r,c] = e1
