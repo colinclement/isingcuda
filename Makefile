@@ -6,6 +6,8 @@ FLAGS=-O3 -use_fast_math #--ptxas-options=-v
 #FLAGS+=-DDBUG #define DBUG
 LIBS=-lcurand -lcublas
 
+FLAGS += -D_FORCE_INLINES
+
 #Location of helper_cuda.h
 HOST=$(shell hostname)
 ifeq ($(HOST), spicable.lassp.cornell.edu)
