@@ -41,7 +41,7 @@ int main(int argc, char **argv){
     
     const char *printMSG = "Incorrect number of arguments: Usage: \n\
 			    ./cuising filename L T N_steps save_period burnin stepsize\n\
-                (optional final argument) initial_spinfile";
+                (optional final argument) initial_spinfile\n";
     if (argc < 8 || argc > 9){
         printf("%s", printMSG);
 	return 0;
